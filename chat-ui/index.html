@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chem Tutor - Scaffold</title>
+    <link rel="stylesheet" href="./styles/tokens.css" />
+    <link rel="stylesheet" href="./styles/globals.css" />
+    <!-- React via CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Markdown + Sanitizer -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const {
+        useState,
+      } = React;
+
+      // ----------------------
+      // Layout Shell
+      // ----------------------
+      function AppShell() {
+        const [chats, setChats] = React.useState(() => {
+          try {
+            const raw = localStorage.getItem('chemTutor.chats');
+            if (raw) return JSON.parse(raw);
+          } catch (_) {}
+          const seed = [{ id: Date.now(), title: 'New Chat', messages: [], updatedAt: Date.now() }];
+          return seed;
+        });
+        const [selectedChatId, setSelectedChatId] = React.useState(() => {
+          try {
+            const raw = localStorage.getItem('chemTutor.selectedChatId');
+            if (raw) return JSON.parse(raw);
+          } catch (_) {}
+          return chats[0]?.id || null;
+        });
+
+        React.useEffect(() => {
+          try { localStorage.setItem('chemTutor.chats', JSON.stringify(chats)); } catch (_) {}
+        }, [chats]);
+        React.useEffect(() => {
+          try { localStorage.setItem('chemTutor.selectedChatId', JSON.stringify(selectedChatId)); } catch (_) {}
+        }, [selectedChatId]);
+
+        const handleNewChat = () => {
+          const newChat = { id: Date.now(), title: 'New Chat', messages: [], updatedAt: Date.now() };
+          setChats((prev) => [newChat, ...prev]);
+          setSelectedChatId(newChat.id);
+        };
+
+        const handleSelectChat = (id) => setSelectedChatId(id);
+
+        const handleSendMessage = async (text) => {
+          setChats((prev) => {
+            const next = prev.map((c) => {
+              if (c.id !== selectedChatId) return c;
+              const userMsg = { id: Date.now(), role: 'user', text };
+              const botMsg = { id: Date.now() + 1, role: 'assistant', text: '' };
+              const msgs = [...c.messages, userMsg, botMsg];
+              const title = c.title === 'New Chat' && text ? text.slice(0, 40) : c.title;
+              return { ...c, messages: msgs, updatedAt: Date.now(), title };
+            });
+            // order by updatedAt desc
+            return [...next].sort((a, b) => b.updatedAt - a.updatedAt);
+          });
+
+          // stream from backend
+          try {
+            const current = chats.find((c) => c.id === selectedChatId);
+            const msgs = (current?.messages || []).map(m => ({ role: m.role, content: m.text }));
+            msgs.push({ role: 'user', content: text });
+            // Switch to RAG endpoint
+            const res = await fetch('http://localhost:8000/api/rag-chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ model: 'mistral', messages: msgs })
+            });
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let done = false;
+            while (!done) {
+              const { value, done: doneRead } = await reader.read();
+              done = doneRead;
+              const chunk = decoder.decode(value || new Uint8Array(), { stream: !done });
+              if (chunk) {
+                setChats(prev => prev.map(c => {
+                  if (c.id !== selectedChatId) return c;
+                  const lastIndex = c.messages.length - 1;
+                  const last = c.messages[lastIndex];
+                  if (last && last.role === 'assistant') {
+                    const updated = { ...last, text: (last.text || '') + chunk };
+                    const newMsgs = [...c.messages.slice(0, lastIndex), updated];
+                    return { ...c, messages: newMsgs };
+                  }
+                  return c;
+                }));
+              }
+            }
+          } catch (err) {
+            setChats(prev => prev.map(c => {
+              if (c.id !== selectedChatId) return c;
+              const lastIndex = c.messages.length - 1;
+              const last = c.messages[lastIndex];
+              const updated = { ...last, text: (last.text || '') + `\n[Error: ${String(err)}]` };
+              const newMsgs = [...c.messages.slice(0, lastIndex), updated];
+              return { ...c, messages: newMsgs };
+            }));
+          }
+        };
+
+        const activeChat = chats.find((c) => c.id === selectedChatId) || chats[0];
+
+        return (
+          <div className="app-shell">
+            <Sidebar
+              chats={chats}
+              selectedChatId={selectedChatId}
+              onNewChat={handleNewChat}
+              onSelectChat={handleSelectChat}
+            />
+            <MainPane
+              activeChat={activeChat}
+              onSendMessage={handleSendMessage}
+            />
+          </div>
+        );
+      }
+
+      // ----------------------
+      // Sidebar
+      // ----------------------
+      function Sidebar({ chats, selectedChatId, onNewChat, onSelectChat }) {
+        return (
+          <aside className="sidebar">
+            <div className="sidebar-header">
+              <NewChatButton onClick={onNewChat} />
+            </div>
+            <ConversationList chats={chats} selectedChatId={selectedChatId} onSelectChat={onSelectChat} />
+            <div className="sidebar-footer">
+              <AppFooterVersion versionText="Chem Tutor v1.0" />
+            </div>
+          </aside>
+        );
+      }
+
+      function NewChatButton({ onClick }) {
+        return (
+          <button className="btn btn-primary btn-new-chat" onClick={onClick}>
+            <span className="icon">+</span>
+            <span>New Chat</span>
+          </button>
+        );
+      }
+
+      function ConversationList({ chats, selectedChatId, onSelectChat }) {
+        return (
+          <div className="conversation-list">
+            {chats.map((c) => (
+              <ConversationListItem
+                key={c.id}
+                title={c.title || 'New Chat'}
+                subtitle={`${c.messages?.length || 0} messages`}
+                selected={c.id === selectedChatId}
+                onClick={() => onSelectChat(c.id)}
+              />
+            ))}
+          </div>
+        );
+      }
+
+      function ConversationListItem({ title, subtitle, selected, onClick }) {
+        return (
+          <div className={"conversation-item" + (selected ? " selected" : "")} onClick={onClick} style={{ cursor: 'pointer' }}>
+            <div className="conversation-icon">💬</div>
+            <div className="conversation-texts">
+              <div className="conversation-title">{title}</div>
+              <div className="conversation-subtitle">{subtitle}</div>
+            </div>
+          </div>
+        );
+      }
+
+      function AppFooterVersion({ versionText }) {
+        return <div className="version-text">{versionText}</div>;
+      }
+
+      // ----------------------
+      // Main Pane
+      // ----------------------
+      function MainPane({ activeChat, onSendMessage }) {
+        const [prefill, setPrefill] = React.useState("");
+        const [isRecording, setIsRecording] = React.useState(false);
+
+        const handleSend = () => {
+          const text = prefill.trim();
+          if (!text) return;
+          onSendMessage(text);
+          setPrefill("");
+        };
+
+        return (
+          <main className="main-pane">
+            <AppHeader
+              title="Organic Chemistry Tutor"
+              subtitle="Ask me anything about organic chemistry! I can explain concepts and draw molecular structures."
+            />
+
+            <div className="content-area">
+              {!activeChat || (activeChat.messages?.length || 0) === 0 ? (
+                <EmptyState />
+              ) : (
+                <MessageList messages={activeChat.messages} />
+              )}
+            </div>
+
+            <ComposerArea
+              prefill={prefill}
+              setPrefill={setPrefill}
+              onSend={handleSend}
+              isRecording={isRecording}
+              setIsRecording={setIsRecording}
+            />
+          </main>
+        );
+      }
+
+      function AppHeader({ title, subtitle }) {
+        return (
+          <header className="app-header">
+            <h1 className="app-title">{title}</h1>
+            <p className="app-subtitle">{subtitle}</p>
+          </header>
+        );
+      }
+
+      function EmptyState() {
+        return (
+          <section className="empty-state">
+            <div className="empty-illustration">🧪</div>
+            <h2 className="empty-title">Welcome to Chem Tutor!</h2>
+            <p className="empty-subtext">
+              Click the microphone to start asking chemistry questions.
+            </p>
+            <p className="empty-hint">
+              Try asking: "What is benzene?" or "Show me the structure of water"
+            </p>
+          </section>
+        );
+      }
+
+      // Placeholder for future messages
+      // Markdown rendering helper
+      function renderMarkdown(text) {
+        if (!text) return '';
+        try {
+          const html = marked.parse(text, { breaks: true });
+          return DOMPurify.sanitize(html);
+        } catch (_) {
+          return text;
+        }
+      }
+
+      function MessageList({ messages }) {
+        return (
+          <div className="message-list">
+            {messages.map((m) => (
+              <div key={m.id} className={"message " + m.role}>
+                <div className="avatar">{m.role === 'user' ? '🧑' : '🧪'}</div>
+                {m.role === 'assistant' ? (
+                  <div className="bubble md" dangerouslySetInnerHTML={{ __html: renderMarkdown(m.text) }} />
+                ) : (
+                  <div className="bubble">{m.text}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+      }
+
+      // ----------------------
+      // Composer
+      // ----------------------
+      function ComposerArea({ prefill, setPrefill, onSend, isRecording, setIsRecording }) {
+        const quickChips = [
+          { label: 'What is organic chemistry?' },
+          { label: 'What is ions?' },
+          { label: 'Draw diagram of water' },
+          { label: 'Draw diagram of benzene' },
+        ];
+
+        return (
+          <div className="composer-area">
+            <div className="quick-actions">
+              <div className="quick-title">Quick Test Questions:</div>
+              <QuickActionsChips chips={quickChips} onPick={(t) => setPrefill(t)} />
+            </div>
+            <div className="composer-row">
+              <MicButton isRecording={isRecording} onToggle={() => setIsRecording(!isRecording)} />
+              <TextComposer value={prefill} onChange={setPrefill} placeholder="Type Question" onSend={onSend} />
+              <div className="mic-helper">Click to start recording your chemistry question</div>
+            </div>
+          </div>
+        );
+      }
+
+      function QuickActionsChips({ chips, onPick }) {
+        return (
+          <div className="chip-row">
+            {chips.map((c, idx) => (
+              <QuickActionChip key={idx} label={c.label} index={idx} onClick={() => onPick(c.label)} />
+            ))}
+          </div>
+        );
+      }
+
+      function QuickActionChip({ label, index, onClick }) {
+        // Alternate color classes to mimic screenshot
+        const colorClass = index < 2 ? 'chip-blue' : 'chip-green';
+        return <button className={`chip ${colorClass}`} onClick={onClick}>{label}</button>;
+      }
+
+      function TextComposer({ value, onChange, placeholder, onSend }) {
+        return (
+          <div className="composer-input-wrap">
+            <input
+              className="text-input"
+              placeholder={placeholder}
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') onSend(); }}
+              aria-label="Type Question"
+            />
+            <button className="btn btn-primary" onClick={onSend}>Send</button>
+          </div>
+        );
+      }
+
+      function MicButton({ isRecording, onToggle }) {
+        return <button className="mic-button" onClick={onToggle} title={isRecording ? 'Stop' : 'Record'}>{isRecording ? '⏹️' : '🎤'}</button>;
+      }
+
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<AppShell />);
+    </script>
+  </body>
+  </html>
+
+

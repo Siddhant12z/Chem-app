@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Virtual envs
+venv/
+local-pdf-rag/venv/
+.env
+.env.*
+
+# Node/Web
+node_modules/
+chat-ui/node_modules/
+dist/
+build/
+
+# OS/Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Data/Indexes
+local-pdf-rag/data/vector_index/*.faiss
+local-pdf-rag/data/vector_index/*.pkl
+local-pdf-rag/data/docs/pdf/*.pdf
+
+
