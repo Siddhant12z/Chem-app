@@ -13,6 +13,85 @@
     <!-- Markdown + Sanitizer -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+    <!-- RDKit JS with fallbacks -->
+    <script>
+      // RDKit loading with multiple fallbacks
+      let rdkitLoadAttempts = 0;
+      const maxAttempts = 3;
+      
+      function loadRDKit() {
+        rdkitLoadAttempts++;
+        console.log(`Attempting to load RDKit (attempt ${rdkitLoadAttempts}/${maxAttempts})`);
+        
+        // Try different CDN sources
+        const cdnSources = [
+          'https://unpkg.com/@rdkit/rdkit/dist/RDKit_minimal.js',
+          'https://cdn.jsdelivr.net/npm/@rdkit/rdkit/dist/RDKit_minimal.js',
+          'https://cdnjs.cloudflare.com/ajax/libs/rdkit/2023.03.1/RDKit_minimal.js'
+        ];
+        
+        const currentSource = cdnSources[(rdkitLoadAttempts - 1) % cdnSources.length];
+        console.log(`Trying RDKit from: ${currentSource}`);
+        
+        const script = document.createElement('script');
+        script.src = currentSource;
+        script.onload = () => {
+          setTimeout(() => {
+            if (window.RDKit) {
+              console.log('RDKit loaded successfully from:', currentSource);
+              window.RDKitReady = true;
+              // Initialize RDKit
+              window.RDKit.init().then(() => {
+                console.log('RDKit initialized successfully');
+                window.RDKitInitialized = true;
+              }).catch(err => {
+                console.error('RDKit initialization failed:', err);
+                window.RDKitInitialized = false;
+              });
+            } else {
+              console.error('RDKit object not found after loading');
+              retryRDKit();
+            }
+          }, 1000);
+        };
+        script.onerror = () => {
+          console.error(`Failed to load RDKit from: ${currentSource}`);
+          retryRDKit();
+        };
+        document.head.appendChild(script);
+      }
+      
+      function retryRDKit() {
+        if (rdkitLoadAttempts < maxAttempts) {
+          console.log(`Retrying RDKit load in 2 seconds...`);
+          setTimeout(loadRDKit, 2000);
+        } else {
+          console.error('All RDKit loading attempts failed');
+          window.RDKitReady = false;
+          window.RDKitInitialized = false;
+          // Show user-friendly error
+          document.addEventListener('DOMContentLoaded', () => {
+            const errorDiv = document.createElement('div');
+            errorDiv.style.cssText = `
+              position: fixed; top: 10px; right: 10px; 
+              background: #fee; border: 1px solid #fcc; 
+              padding: 10px; border-radius: 4px; 
+              color: #c33; font-family: Arial, sans-serif;
+              z-index: 10000; max-width: 300px;
+            `;
+            errorDiv.innerHTML = `
+              <strong>Chemistry Diagrams Unavailable</strong><br>
+              RDKit library failed to load. Diagrams may not display properly.<br>
+              <button onclick="this.parentElement.remove()" style="margin-top: 5px;">Dismiss</button>
+            `;
+            document.body.appendChild(errorDiv);
+          });
+        }
+      }
+      
+      // Start loading RDKit when page loads
+      window.addEventListener('load', loadRDKit);
+    </script>
   </head>
   <body>
     <div id="root"></div>
@@ -41,6 +120,7 @@
           } catch (_) {}
           return chats[0]?.id || null;
         });
+        const [deleteTargetId, setDeleteTargetId] = React.useState(null);
 
         React.useEffect(() => {
           try { localStorage.setItem('chemTutor.chats', JSON.stringify(chats)); } catch (_) {}
@@ -56,6 +136,22 @@
         };
 
         const handleSelectChat = (id) => setSelectedChatId(id);
+
+        const requestDeleteChat = (id) => setDeleteTargetId(id);
+        const cancelDeleteChat = () => setDeleteTargetId(null);
+        const confirmDeleteChat = () => {
+          if (deleteTargetId == null) return;
+          setChats(prev => {
+            const remaining = prev.filter(c => c.id !== deleteTargetId);
+            let nextSelected = selectedChatId;
+            if (selectedChatId === deleteTargetId) {
+              nextSelected = remaining[0]?.id || null;
+            }
+            setSelectedChatId(nextSelected);
+            return remaining;
+          });
+          setDeleteTargetId(null);
+        };
 
         const handleSendMessage = async (text) => {
           setChats((prev) => {
@@ -74,7 +170,13 @@
           // stream from backend
           try {
             const current = chats.find((c) => c.id === selectedChatId);
-            const msgs = (current?.messages || []).map(m => ({ role: m.role, content: m.text }));
+            const msgs = [];
+            // Inject mixed Roman-Nepali + English style instruction
+            const systemPrompt = (
+              'Respond in clear Roman Nepali + English (use Nepali in Latin script, no Devanagari). Prefer Nepali phrasing with English technical terms where natural. Keep concise with short paragraphs and simple bullets. Do not output long raw source dumps; if citing, show 1–2 concise references.'
+            );
+            msgs.push({ role: 'system', content: systemPrompt });
+            (current?.messages || []).forEach(m => msgs.push({ role: m.role, content: m.text }));
             msgs.push({ role: 'user', content: text });
             // Switch to RAG endpoint
             const res = await fetch('http://localhost:8000/api/rag-chat', {
@@ -85,17 +187,90 @@
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let done = false;
+            let buffer = ''; // Buffer to accumulate chunks
             while (!done) {
               const { value, done: doneRead } = await reader.read();
               done = doneRead;
-              const chunk = decoder.decode(value || new Uint8Array(), { stream: !done });
+              let chunk = decoder.decode(value || new Uint8Array(), { stream: !done });
               if (chunk) {
+                buffer += chunk; // Accumulate chunks in buffer
+                // Detect fenced tool JSON blocks and convert to attachments; strip from text
+                try {
+                  const toolRegex = /```(?:json)?\s*(\{[^}]*"tool"[^}]*\})\s*```/g;
+                  let m;
+                  const toAttach = [];
+                  while ((m = toolRegex.exec(buffer)) !== null) {
+                    try {
+                      const obj = JSON.parse(m[1]);
+                      console.log('Found tool JSON:', obj); // Debug log
+                      if (obj.tool === 'draw_molecule') {
+                        if (Array.isArray(obj.items)) {
+                          for (const it of obj.items) {
+                            if (it.name && it.smiles) {
+                              toAttach.push({ kind: 'molecule', name: it.name, smiles: it.smiles });
+                            }
+                          }
+                        } else if (obj.name && obj.smiles) {
+                          toAttach.push({ kind: 'molecule', name: obj.name, smiles: obj.smiles });
+                        }
+                        console.log('Adding molecule attachment:', toAttach); // Debug log
+                        // remove this block from visible text
+                        buffer = buffer.replace(m[0], '');
+                      }
+                    } catch (e) {
+                      console.log('JSON parse error:', e, m[1]); // Debug log
+                    }
+                  }
+                  if (toAttach.length > 0) {
+                    setChats(prev => prev.map(c => {
+                      if (c.id !== selectedChatId) return c;
+                      const lastIndex = c.messages.length - 1;
+                      const last = c.messages[lastIndex];
+                      if (!last || last.role !== 'assistant') return c;
+                      const attachments = Array.isArray(last.attachments) ? last.attachments.slice() : [];
+                      attachments.push(...toAttach);
+                      const updated = { ...last, attachments };
+                      const newMsgs = [...c.messages.slice(0, lastIndex), updated];
+                      return { ...c, messages: newMsgs };
+                    }));
+                  }
+                } catch (_) {}
+
+                // Parse tool events embedded as [EVENT]{json}
+                const eventMatches = [...buffer.matchAll(/\[EVENT\](\{[^\n]+\})/g)];
+                for (const m of eventMatches) {
+                  try {
+                    const evt = JSON.parse(m[1]);
+                    if (evt.type === 'molecule') {
+                      setChats(prev => prev.map(c => {
+                        if (c.id !== selectedChatId) return c;
+                        const lastIndex = c.messages.length - 1;
+                        const last = c.messages[lastIndex];
+                        if (!last || last.role !== 'assistant') return c;
+                        const attachments = Array.isArray(last.attachments) ? last.attachments.slice() : [];
+                        if (evt.items && Array.isArray(evt.items)) {
+                          for (const it of evt.items) {
+                            if (it.name && it.smiles) {
+                              attachments.push({ kind: 'molecule', name: it.name, smiles: it.smiles });
+                            }
+                          }
+                        } else if (evt.name && evt.smiles) {
+                          attachments.push({ kind: 'molecule', name: evt.name, smiles: evt.smiles });
+                        }
+                        const updated = { ...last, attachments };
+                        const newMsgs = [...c.messages.slice(0, lastIndex), updated];
+                        return { ...c, messages: newMsgs };
+                      }));
+                    }
+                  } catch (_) {}
+                }
+
                 setChats(prev => prev.map(c => {
                   if (c.id !== selectedChatId) return c;
                   const lastIndex = c.messages.length - 1;
                   const last = c.messages[lastIndex];
                   if (last && last.role === 'assistant') {
-                    const updated = { ...last, text: (last.text || '') + chunk };
+                    const updated = { ...last, text: buffer };
                     const newMsgs = [...c.messages.slice(0, lastIndex), updated];
                     return { ...c, messages: newMsgs };
                   }
@@ -124,11 +299,21 @@
               selectedChatId={selectedChatId}
               onNewChat={handleNewChat}
               onSelectChat={handleSelectChat}
+              onDeleteChat={requestDeleteChat}
             />
             <MainPane
               activeChat={activeChat}
               onSendMessage={handleSendMessage}
             />
+            {deleteTargetId != null && (
+              <ConfirmModal
+                title="Delete chat?"
+                bodyText="This will permanently remove the conversation. This action cannot be undone."
+                confirmText="Delete"
+                onConfirm={confirmDeleteChat}
+                onCancel={cancelDeleteChat}
+              />
+            )}
           </div>
         );
       }
@@ -136,13 +321,13 @@
       // ----------------------
       // Sidebar
       // ----------------------
-      function Sidebar({ chats, selectedChatId, onNewChat, onSelectChat }) {
+      function Sidebar({ chats, selectedChatId, onNewChat, onSelectChat, onDeleteChat }) {
         return (
           <aside className="sidebar">
             <div className="sidebar-header">
               <NewChatButton onClick={onNewChat} />
             </div>
-            <ConversationList chats={chats} selectedChatId={selectedChatId} onSelectChat={onSelectChat} />
+            <ConversationList chats={chats} selectedChatId={selectedChatId} onSelectChat={onSelectChat} onDeleteChat={onDeleteChat} />
             <div className="sidebar-footer">
               <AppFooterVersion versionText="Chem Tutor v1.0" />
             </div>
@@ -159,7 +344,7 @@
         );
       }
 
-      function ConversationList({ chats, selectedChatId, onSelectChat }) {
+      function ConversationList({ chats, selectedChatId, onSelectChat, onDeleteChat }) {
         return (
           <div className="conversation-list">
             {chats.map((c) => (
@@ -169,19 +354,43 @@
                 subtitle={`${c.messages?.length || 0} messages`}
                 selected={c.id === selectedChatId}
                 onClick={() => onSelectChat(c.id)}
+                onDelete={() => onDeleteChat(c.id)}
               />
             ))}
           </div>
         );
       }
 
-      function ConversationListItem({ title, subtitle, selected, onClick }) {
+      function ConversationListItem({ title, subtitle, selected, onClick, onDelete }) {
         return (
           <div className={"conversation-item" + (selected ? " selected" : "")} onClick={onClick} style={{ cursor: 'pointer' }}>
             <div className="conversation-icon">💬</div>
             <div className="conversation-texts">
               <div className="conversation-title">{title}</div>
               <div className="conversation-subtitle">{subtitle}</div>
+            </div>
+            <div className="conversation-actions">
+              <button className="icon-btn delete-btn" title="Delete chat" aria-label="Delete chat" onClick={(e) => { e.stopPropagation(); onDelete && onDelete(); }}>🗑️</button>
+            </div>
+          </div>
+        );
+      }
+
+      function ConfirmModal({ title, bodyText, confirmText = 'Confirm', onConfirm, onCancel }) {
+        React.useEffect(() => {
+          const onKey = (e) => { if (e.key === 'Escape') onCancel && onCancel(); };
+          window.addEventListener('keydown', onKey);
+          return () => window.removeEventListener('keydown', onKey);
+        }, [onCancel]);
+        return (
+          <div className="modal-backdrop" role="dialog" aria-modal="true">
+            <div className="modal">
+              <div className="modal-title">{title}</div>
+              <div className="modal-body">{bodyText}</div>
+              <div className="modal-actions">
+                <button className="btn" onClick={onCancel}>Cancel</button>
+                <button className="btn btn-danger" onClick={onConfirm}>{confirmText}</button>
+              </div>
             </div>
           </div>
         );
@@ -197,13 +406,119 @@
       function MainPane({ activeChat, onSendMessage }) {
         const [prefill, setPrefill] = React.useState("");
         const [isRecording, setIsRecording] = React.useState(false);
+        const [isLoading, setIsLoading] = React.useState(false);
+        const [isSpeaking, setIsSpeaking] = React.useState(false);
+        const [recognition, setRecognition] = React.useState(null);
+        const [speechSynthesis, setSpeechSynthesis] = React.useState(null);
+
+        // Initialize speech recognition and synthesis
+        React.useEffect(() => {
+          if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const recognitionInstance = new SpeechRecognition();
+            recognitionInstance.continuous = false;
+            recognitionInstance.interimResults = false;
+            recognitionInstance.lang = 'en-US';
+            
+            recognitionInstance.onresult = (event) => {
+              const transcript = event.results[0][0].transcript;
+              setPrefill(transcript);
+              setIsRecording(false);
+            };
+            
+            recognitionInstance.onerror = (event) => {
+              console.error('Speech recognition error:', event.error);
+              setIsRecording(false);
+            };
+            
+            recognitionInstance.onend = () => {
+              setIsRecording(false);
+            };
+            
+            setRecognition(recognitionInstance);
+          }
+
+          if ('speechSynthesis' in window) {
+            setSpeechSynthesis(window.speechSynthesis);
+          }
+        }, []);
 
         const handleSend = () => {
           const text = prefill.trim();
           if (!text) return;
-          onSendMessage(text);
+          setIsLoading(true);
+          Promise.resolve(onSendMessage(text)).finally(() => setIsLoading(false));
           setPrefill("");
         };
+
+        const handleVoiceInput = () => {
+          if (!recognition) {
+            alert('Speech recognition not supported in this browser');
+            return;
+          }
+          
+          if (isRecording) {
+            recognition.stop();
+            setIsRecording(false);
+          } else {
+            recognition.start();
+            setIsRecording(true);
+          }
+        };
+
+        const speakText = (text) => {
+          if (!speechSynthesis) return;
+          
+          // Stop any current speech
+          speechSynthesis.cancel();
+          
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.rate = 0.9;
+          utterance.pitch = 1;
+          utterance.volume = 0.8;
+          
+          utterance.onstart = () => setIsSpeaking(true);
+          utterance.onend = () => setIsSpeaking(false);
+          utterance.onerror = () => setIsSpeaking(false);
+          
+          speechSynthesis.speak(utterance);
+        };
+
+        const stopSpeaking = () => {
+          if (speechSynthesis) {
+            speechSynthesis.cancel();
+            setIsSpeaking(false);
+          }
+        };
+
+        // Auto-speak assistant messages when they're complete
+        React.useEffect(() => {
+          if (!activeChat || !activeChat.messages || isLoading) return;
+          
+          const lastMessage = activeChat.messages[activeChat.messages.length - 1];
+          if (lastMessage && lastMessage.role === 'assistant' && lastMessage.text) {
+            // Only speak if the message is complete (not streaming)
+            const textToSpeak = lastMessage.text.trim();
+            if (textToSpeak && textToSpeak.length > 10) { // Only speak substantial responses
+              // Clean the text for speech (remove markdown formatting)
+              const cleanText = textToSpeak
+                .replace(/#{1,6}\s+/g, '') // Remove headers
+                .replace(/\*\*(.*?)\*\*/g, '$1') // Remove bold
+                .replace(/\*(.*?)\*/g, '$1') // Remove italic
+                .replace(/`(.*?)`/g, '$1') // Remove code
+                .replace(/\[(.*?)\]\(.*?\)/g, '$1') // Remove links
+                .replace(/\n+/g, ' ') // Replace newlines with spaces
+                .trim();
+              
+              if (cleanText.length > 10) {
+                // Add a small delay to ensure the message is fully rendered
+                setTimeout(() => {
+                  speakText(cleanText);
+                }, 500);
+              }
+            }
+          }
+        }, [activeChat?.messages, isLoading, speechSynthesis]);
 
         return (
           <main className="main-pane">
@@ -216,7 +531,7 @@
               {!activeChat || (activeChat.messages?.length || 0) === 0 ? (
                 <EmptyState />
               ) : (
-                <MessageList messages={activeChat.messages} />
+                <MessageList messages={activeChat.messages} onSpeak={speakText} />
               )}
             </div>
 
@@ -225,7 +540,9 @@
               setPrefill={setPrefill}
               onSend={handleSend}
               isRecording={isRecording}
-              setIsRecording={setIsRecording}
+              onVoiceInput={handleVoiceInput}
+              isSpeaking={isSpeaking}
+              onStopSpeaking={stopSpeaking}
             />
           </main>
         );
@@ -260,34 +577,478 @@
       function renderMarkdown(text) {
         if (!text) return '';
         try {
-          const html = marked.parse(text, { breaks: true });
+          // Remove any remaining tool JSON blocks before rendering
+          const cleaned = text.replace(/```(?:json)?\s*\{[^}]*"tool"[^}]*\}\s*```/g, '');
+          const html = marked.parse(cleaned, { breaks: true });
           return DOMPurify.sanitize(html);
         } catch (_) {
           return text;
         }
       }
 
-      function MessageList({ messages }) {
+      // Parse assistant content into answer and up to 2 references
+      function parseAssistantContent(raw) {
+        const text = (raw || '').trim();
+        if (!text) return { answerText: '', references: [], plainText: '' };
+
+        // Split on common reference headers; prefer the last occurrence
+        const headerRegex = /(\n|\r|^)\s*(Sources?:|References?:)\s*\n/i;
+        let answerPart = text;
+        let refsPart = '';
+        const match = text.match(headerRegex);
+        if (match) {
+          const idx = text.toLowerCase().lastIndexOf(match[2].toLowerCase());
+          if (idx >= 0) {
+            answerPart = text.slice(0, idx).trim();
+            refsPart = text.slice(idx).replace(headerRegex, '').trim();
+          }
+        }
+
+        // Build references array: first 1–2 meaningful lines
+        const lines = refsPart
+          .split(/\n+/)
+          .map(l => l.replace(/^[-*\d\s\[\]]+/, '').trim())
+          .filter(l => l.length > 0)
+          .slice(0, 2);
+
+        const urlRegex = /(https?:\/\/[^\s)]+)|(www\.[^\s)]+)/i;
+        const references = lines.map(l => {
+          const m = l.match(urlRegex);
+          const href = m ? (m[0].startsWith('http') ? m[0] : `https://${m[0]}`) : undefined;
+          const label = l.length > 150 ? (l.slice(0, 147) + '…') : l;
+          return { label, href };
+        });
+
+        // Plain text for speech: strip markdown
+        const plainText = answerPart
+          .replace(/#{1,6}\s+/g, '')
+          .replace(/\*\*(.*?)\*\*/g, '$1')
+          .replace(/\*(.*?)\*/g, '$1')
+          .replace(/`(.*?)`/g, '$1')
+          .replace(/\[(.*?)\]\(.*?\)/g, '$1')
+          .replace(/\n+/g, ' ')
+          .trim();
+
+        return { answerText: answerPart, references, plainText };
+      }
+
+      // ----------------------
+      // Nepali-English mixing helpers (client-side safeguard)
+      // ----------------------
+      function containsDevanagari(s) {
+        return /[\u0900-\u097F]/.test(s || '');
+      }
+      // Very lightweight Devanagari -> Roman transliteration (basic for common chars)
+      function devToRoman(s) {
+        if (!s) return s;
+        const table = {
+          'अ':'a','आ':'aa','इ':'i','ई':'ii','उ':'u','ऊ':'uu','ए':'e','ऐ':'ai','ओ':'o','औ':'au','ऋ':'ri',
+          'ा':'a','ि':'i','ी':'i','ु':'u','ू':'u','े':'e','ै':'ai','ो':'o','ौ':'au','ं':'n','ः':'h','ँ':'n',
+          'क':'ka','ख':'kha','ग':'ga','घ':'gha','ङ':'nga',
+          'च':'cha','छ':'chha','ज':'ja','झ':'jha','ञ':'nya',
+          'ट':'ta','ठ':'tha','ड':'da','ढ':'dha','ण':'na',
+          'त':'ta','थ':'tha','द':'da','ध':'dha','न':'na',
+          'प':'pa','फ':'pha','ब':'ba','भ':'bha','म':'ma',
+          'य':'ya','र':'ra','ल':'la','व':'wa','स':'sa','ह':'ha','श':'sha','ष':'sha','क्ष':'ksha','त्र':'tra','ज्ञ':'gya'
+        };
+        let out = '';
+        for (let i = 0; i < s.length; i++) {
+          const ch = s[i];
+          out += table[ch] || ch;
+        }
+        return out;
+      }
+      function toNepEngMix(s) {
+        if (!s) return s;
+        const map = [
+          [/\bOrganic chemistry\b/gi, 'Organic chemistry'],
+          [/\bbranch of chemistry\b/gi, 'chemistry को शाखा'],
+          [/\bchemistry\b/gi, 'chemistry'],
+          [/\bcarbon[- ]based compounds\b/gi, 'carbon-आधारित compounds'],
+          [/\bproperties\b/gi, 'properties/गुणहरू'],
+          [/\bstructures\b/gi, 'structures/संरचनाहरू'],
+          [/\breactions\b/gi, 'reactions/प्रतिक्रियाहरू'],
+          [/\bcompounds\b/gi, 'compounds/यौगिकहरू'],
+          [/\binclude\b/gi, 'समावेश गर्छन्'],
+          [/\bexamples of\b/gi, 'केही examples of'],
+          [/\bsolids\b/gi, 'Solids/ठोस'],
+          [/\bliquids\b/gi, 'Liquids/तरल'],
+          [/\bgases\b/gi, 'Gases/ग्यास'],
+          [/\bartificial(ly)?\b/gi, 'artificial/कृत्रिम'],
+          [/\bindustries\b/gi, 'industries/उद्योगहरू'],
+          [/\bpharmaceuticals\b/gi, 'pharmaceuticals'],
+          [/\bfood production\b/gi, 'food production'],
+          [/\btherefore\b/gi, 'त्यसैले'],
+          [/\balso\b/gi, 'पनि'],
+          [/\bthat\b/gi, ''],
+        ];
+        let out = s;
+        for (const [re, rep] of map) out = out.replace(re, rep);
+        // Add Nepali framing if it looks like a single-line definition
+        if (/\bOrganic chemistry\b/i.test(out)) {
+          out = out.replace(/^[\s\S]*?Organic chemistry/i, 'Organic chemistry भनेको');
+          out = out.replace(/\bis\b/i, 'हो');
+        }
+        return out;
+      }
+      function maybeMixNepEng(text) {
+        const base = containsDevanagari(text) ? devToRoman(text) : toNepEngMix(text);
+        return base;
+      }
+
+      function MessageList({ messages, onSpeak }) {
         return (
           <div className="message-list">
             {messages.map((m) => (
               <div key={m.id} className={"message " + m.role}>
                 <div className="avatar">{m.role === 'user' ? '🧑' : '🧪'}</div>
-                {m.role === 'assistant' ? (
-                  <div className="bubble md" dangerouslySetInnerHTML={{ __html: renderMarkdown(m.text) }} />
-                ) : (
-                  <div className="bubble">{m.text}</div>
-                )}
+                {m.role === 'assistant'
+                  ? (
+                      <div className="bubble md">
+                        {m.text && m.text.trim().length > 0
+                          ? (() => {
+                              const { answerText, references, plainText } = parseAssistantContent(m.text);
+                              const mixed = maybeMixNepEng(answerText);
+                              return (
+                                <>
+                                  <div dangerouslySetInnerHTML={{ __html: renderMarkdown(mixed) }} />
+                                  {references.length > 0 && <ReferencesPanel items={references} />}
+                                  {plainText && (
+                                    <div className="speak-row">
+                                      <button className="speak-inline" onClick={() => onSpeak && onSpeak(maybeMixNepEng(plainText))} title="Speak this answer">🔊 Speak</button>
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()
+                          : (
+                              <span className="thinking" aria-live="polite" aria-busy="true">
+                                <span className="spinner" />
+                                <span className="thinking-text">Thinking...</span>
+                              </span>
+                            )}
+                        {Array.isArray(m.attachments) && m.attachments.map((att, i) => (
+                          att.kind === 'molecule' ? <MoleculeCard key={i} name={att.name} smiles={att.smiles} /> : null
+                        ))}
+                      </div>
+                    )
+                  : (
+                      <div className="bubble">{m.text}</div>
+                    )}
               </div>
             ))}
           </div>
         );
       }
 
+      function ReferencesPanel({ items }) {
+        return (
+          <div className="refs-panel">
+            <div className="refs-title">📚 References:</div>
+            <ul className="refs-list">
+              {items.map((it, idx) => (
+                <li key={idx}>
+                  {it.href ? <a href={it.href} target="_blank" rel="noreferrer noopener">{it.label}</a> : it.label}
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      }
+      // Simple molecule name to SMILES mapping
+      const moleculeSmiles = {
+        'benzene': 'c1ccccc1',
+        'water': 'O',
+        'methane': 'C',
+        'ethanol': 'CCO',
+        'acetic acid': 'CC(=O)O',
+        'phosphoric acid': 'OP(=O)(O)O',
+        'ammonia': 'N',
+        'carbon dioxide': 'O=C=O',
+        'glucose': 'C([C@@H]1[C@H]([C@@H]([C@H]([C@H](O1)O)O)O)O)O',
+        'caffeine': 'CN1C=NC2=C1C(=O)N(C(=O)N2C)C'
+      };
+
+      // Simple SVG molecule renderer for common molecules
+      function createSimpleMoleculeSVG(name, smiles) {
+        const molecules = {
+          'benzene': {
+            svg: `
+              <svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="100" cy="100" r="60" fill="none" stroke="#333" stroke-width="3"/>
+                <circle cx="100" cy="40" r="8" fill="#333"/>
+                <circle cx="140" cy="70" r="8" fill="#333"/>
+                <circle cx="140" cy="130" r="8" fill="#333"/>
+                <circle cx="100" cy="160" r="8" fill="#333"/>
+                <circle cx="60" cy="130" r="8" fill="#333"/>
+                <circle cx="60" cy="70" r="8" fill="#333"/>
+                <line x1="100" y1="40" x2="140" y2="70" stroke="#333" stroke-width="2"/>
+                <line x1="140" y1="70" x2="140" y2="130" stroke="#333" stroke-width="2"/>
+                <line x1="140" y1="130" x2="100" y2="160" stroke="#333" stroke-width="2"/>
+                <line x1="100" y1="160" x2="60" y2="130" stroke="#333" stroke-width="2"/>
+                <line x1="60" y1="130" x2="60" y2="70" stroke="#333" stroke-width="2"/>
+                <line x1="60" y1="70" x2="100" y2="40" stroke="#333" stroke-width="2"/>
+                <text x="100" y="190" text-anchor="middle" font-family="Arial" font-size="12" fill="#666">Benzene (C₆H₆)</text>
+              </svg>
+            `
+          },
+          'water': {
+            svg: `
+              <svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="100" cy="100" r="12" fill="#FF6B6B"/>
+                <circle cx="80" cy="80" r="6" fill="#4ECDC4"/>
+                <circle cx="120" cy="80" r="6" fill="#4ECDC4"/>
+                <line x1="100" y1="100" x2="80" y2="80" stroke="#333" stroke-width="2"/>
+                <line x1="100" y1="100" x2="120" y2="80" stroke="#333" stroke-width="2"/>
+                <text x="100" y="140" text-anchor="middle" font-family="Arial" font-size="12" fill="#666">Water (H₂O)</text>
+              </svg>
+            `
+          },
+          'methane': {
+            svg: `
+              <svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="100" cy="100" r="10" fill="#333"/>
+                <circle cx="100" cy="60" r="6" fill="#4ECDC4"/>
+                <circle cx="140" cy="100" r="6" fill="#4ECDC4"/>
+                <circle cx="100" cy="140" r="6" fill="#4ECDC4"/>
+                <circle cx="60" cy="100" r="6" fill="#4ECDC4"/>
+                <line x1="100" y1="100" x2="100" y2="60" stroke="#333" stroke-width="2"/>
+                <line x1="100" y1="100" x2="140" y2="100" stroke="#333" stroke-width="2"/>
+                <line x1="100" y1="100" x2="100" y2="140" stroke="#333" stroke-width="2"/>
+                <line x1="100" y1="100" x2="60" y2="100" stroke="#333" stroke-width="2"/>
+                <text x="100" y="170" text-anchor="middle" font-family="Arial" font-size="12" fill="#666">Methane (CH₄)</text>
+              </svg>
+            `
+          },
+          'ethanol': {
+            svg: `
+              <svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="80" cy="100" r="8" fill="#333"/>
+                <circle cx="120" cy="100" r="8" fill="#333"/>
+                <circle cx="80" cy="60" r="6" fill="#4ECDC4"/>
+                <circle cx="80" cy="140" r="6" fill="#4ECDC4"/>
+                <circle cx="60" cy="100" r="6" fill="#4ECDC4"/>
+                <circle cx="120" cy="60" r="6" fill="#4ECDC4"/>
+                <circle cx="120" cy="140" r="6" fill="#4ECDC4"/>
+                <circle cx="140" cy="100" r="6" fill="#4ECDC4"/>
+                <circle cx="120" cy="40" r="6" fill="#FF6B6B"/>
+                <line x1="80" y1="100" x2="120" y2="100" stroke="#333" stroke-width="2"/>
+                <line x1="80" y1="100" x2="80" y2="60" stroke="#333" stroke-width="2"/>
+                <line x1="80" y1="100" x2="80" y2="140" stroke="#333" stroke-width="2"/>
+                <line x1="80" y1="100" x2="60" y2="100" stroke="#333" stroke-width="2"/>
+                <line x1="120" y1="100" x2="120" y2="60" stroke="#333" stroke-width="2"/>
+                <line x1="120" y1="100" x2="120" y2="140" stroke="#333" stroke-width="2"/>
+                <line x1="120" y1="100" x2="140" y2="100" stroke="#333" stroke-width="2"/>
+                <line x1="120" y1="60" x2="120" y2="40" stroke="#333" stroke-width="2"/>
+                <text x="100" y="180" text-anchor="middle" font-family="Arial" font-size="12" fill="#666">Ethanol (C₂H₅OH)</text>
+              </svg>
+            `
+          }
+        };
+        
+        const molecule = molecules[name.toLowerCase()];
+        if (molecule) {
+          return molecule.svg;
+        }
+        
+        // Generic fallback for unknown molecules
+        return `
+          <svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+            <rect x="50" y="50" width="100" height="100" fill="none" stroke="#ccc" stroke-width="2" stroke-dasharray="5,5"/>
+            <text x="100" y="100" text-anchor="middle" font-family="Arial" font-size="14" fill="#666">${name}</text>
+            <text x="100" y="120" text-anchor="middle" font-family="Arial" font-size="10" fill="#999">${smiles}</text>
+            <text x="100" y="140" text-anchor="middle" font-family="Arial" font-size="10" fill="#999">Structure not available</text>
+          </svg>
+        `;
+      }
+
+      // Fallback molecule display when RDKit fails
+      function createFallbackMoleculeDisplay(name, smiles) {
+        const commonMolecules = {
+          'benzene': {
+            formula: 'C₆H₆',
+            structure: 'Hexagonal ring with alternating double bonds',
+            description: 'Aromatic hydrocarbon with 6 carbon atoms in a ring'
+          },
+          'water': {
+            formula: 'H₂O',
+            structure: 'Bent molecule (104.5°)',
+            description: 'Two hydrogen atoms bonded to one oxygen atom'
+          },
+          'methane': {
+            formula: 'CH₄',
+            structure: 'Tetrahedral geometry',
+            description: 'One carbon atom bonded to four hydrogen atoms'
+          },
+          'ethanol': {
+            formula: 'C₂H₅OH',
+            structure: 'CH₃-CH₂-OH',
+            description: 'Two carbon chain with hydroxyl group'
+          },
+          'caffeine': {
+            formula: 'C₈H₁₀N₄O₂',
+            structure: 'Complex bicyclic structure',
+            description: 'Purine derivative with fused rings'
+          }
+        };
+        
+        const molecule = commonMolecules[name.toLowerCase()] || {
+          formula: smiles,
+          structure: 'Structure not available',
+          description: 'Molecular structure display unavailable'
+        };
+        
+        return `
+          <div style="padding: 15px; text-align: center; color: #333;">
+            <div style="font-size: 18px; font-weight: bold; margin-bottom: 8px;">
+              ${molecule.formula}
+            </div>
+            <div style="font-size: 14px; margin-bottom: 8px; color: #666;">
+              ${molecule.structure}
+            </div>
+            <div style="font-size: 12px; color: #888;">
+              ${molecule.description}
+            </div>
+            <div style="font-size: 10px; color: #aaa; margin-top: 8px;">
+              SMILES: ${smiles}
+            </div>
+          </div>
+        `;
+      }
+
+      function MoleculeCard({ name, smiles, width = 220, height = 160 }) {
+        const ref = React.useRef(null);
+        const [actualSmiles, setActualSmiles] = React.useState(smiles);
+        const [error, setError] = React.useState(null);
+        const [isRendering, setIsRendering] = React.useState(false);
+        
+        React.useEffect(() => {
+          // If no SMILES provided, try to resolve from name
+          if (!actualSmiles && name) {
+            const resolved = moleculeSmiles[name.toLowerCase()];
+            if (resolved) {
+              setActualSmiles(resolved);
+            }
+          }
+        }, [name, actualSmiles]);
+
+        React.useEffect(() => {
+          if (!actualSmiles) return;
+          
+          // Check if RDKit is loaded and initialized
+          if (!window.RDKit || !window.RDKitReady || !window.RDKitInitialized) {
+            setError('RDKit not loaded yet. Please wait...');
+            // Retry after a short delay
+            const timer = setTimeout(() => {
+              if (window.RDKit && window.RDKitReady && window.RDKitInitialized) {
+                setError(null);
+                setIsRendering(true);
+              } else if (window.RDKit && window.RDKitReady) {
+                setError('RDKit loaded but not initialized. Please wait...');
+                // Try to initialize RDKit
+                if (window.RDKit.init) {
+                  window.RDKit.init().then(() => {
+                    window.RDKitInitialized = true;
+                    setError(null);
+                    setIsRendering(true);
+                  }).catch(err => {
+                    console.error('RDKit initialization failed:', err);
+                    setError('RDKit initialization failed. Please refresh the page.');
+                  });
+                }
+              } else {
+                setError('RDKit failed to load. Using simple diagram.');
+                // Use simple SVG renderer immediately
+                if (actualSmiles && ref.current) {
+                  ref.current.innerHTML = createSimpleMoleculeSVG(name, actualSmiles);
+                }
+              }
+            }, 3000);
+            return () => clearTimeout(timer);
+          }
+          
+          setIsRendering(true);
+          setError(null);
+          
+          try {
+            console.log(`Rendering molecule: ${name}, SMILES: ${actualSmiles}`);
+            const mol = window.RDKit.get_mol(actualSmiles);
+            if (!mol) {
+              throw new Error('Failed to create molecule from SMILES');
+            }
+            
+            const svg = mol.get_svg();
+            if (!svg) {
+              throw new Error('Failed to generate SVG');
+            }
+            
+            if (ref.current) {
+              ref.current.innerHTML = svg;
+              console.log(`Successfully rendered ${name}`);
+            }
+            setError(null);
+          } catch (err) {
+            console.error(`Error rendering molecule ${name}:`, err);
+            setError(`Using simple diagram`);
+            // Use simple SVG renderer as fallback
+            if (ref.current) {
+              ref.current.innerHTML = createSimpleMoleculeSVG(name, actualSmiles);
+            }
+          } finally {
+            setIsRendering(false);
+          }
+        }, [actualSmiles, name]);
+        
+        return (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>
+              {name}{actualSmiles ? ` — ${actualSmiles}` : ' (SMILES not found)'}
+              {isRendering && <span style={{ color: '#3b82f6' }}> (rendering...)</span>}
+              {error && (
+                <span style={{ color: '#ef4444' }}>
+                  ({error})
+                  {error.includes('RDKit failed to load') && (
+                    <button 
+                      onClick={() => window.location.reload()} 
+                      style={{ 
+                        marginLeft: '8px', 
+                        padding: '2px 6px', 
+                        fontSize: '10px', 
+                        background: '#3b82f6', 
+                        color: 'white', 
+                        border: 'none', 
+                        borderRadius: '3px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Retry
+                    </button>
+                  )}
+                </span>
+              )}
+            </div>
+            <div 
+              ref={ref} 
+              style={{ 
+                width, 
+                height, 
+                background: '#fff', 
+                border: '1px solid #e5e7eb',
+                borderRadius: '4px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }} 
+            />
+          </div>
+        );
+      }
+
+
       // ----------------------
       // Composer
       // ----------------------
-      function ComposerArea({ prefill, setPrefill, onSend, isRecording, setIsRecording }) {
+      function ComposerArea({ prefill, setPrefill, onSend, isRecording, onVoiceInput, isSpeaking, onStopSpeaking }) {
         const quickChips = [
           { label: 'What is organic chemistry?' },
           { label: 'What is ions?' },
@@ -302,9 +1063,10 @@
               <QuickActionsChips chips={quickChips} onPick={(t) => setPrefill(t)} />
             </div>
             <div className="composer-row">
-              <MicButton isRecording={isRecording} onToggle={() => setIsRecording(!isRecording)} />
+              <MicButton isRecording={isRecording} onToggle={onVoiceInput} />
               <TextComposer value={prefill} onChange={setPrefill} placeholder="Type Question" onSend={onSend} />
-              <div className="mic-helper">Click to start recording your chemistry question</div>
+              <SpeakerButton isSpeaking={isSpeaking} onToggle={onStopSpeaking} />
+              <div className="mic-helper">Click microphone to speak your question</div>
             </div>
           </div>
         );
@@ -343,7 +1105,11 @@
       }
 
       function MicButton({ isRecording, onToggle }) {
-        return <button className="mic-button" onClick={onToggle} title={isRecording ? 'Stop' : 'Record'}>{isRecording ? '⏹️' : '🎤'}</button>;
+        return <button className={`mic-button ${isRecording ? 'recording' : ''}`} onClick={onToggle} title={isRecording ? 'Stop Recording' : 'Start Recording'}>{isRecording ? '⏹️' : '🎤'}</button>;
+      }
+
+      function SpeakerButton({ isSpeaking, onToggle }) {
+        return <button className={`speaker-button ${isSpeaking ? 'speaking' : ''}`} onClick={onToggle} title={isSpeaking ? 'Stop Speaking' : 'Speaker'}>{isSpeaking ? '🔇' : '🔊'}</button>;
       }
 
       const root = ReactDOM.createRoot(document.getElementById('root'));
