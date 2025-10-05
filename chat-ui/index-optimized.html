@@ -6,16 +6,19 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>Chem Tutor - v2.0 (OpenAI Voice)</title>
+    <title>Chem Tutor - v2.0 (Optimized)</title>
     <link rel="stylesheet" href="./styles/tokens.css" />
     <link rel="stylesheet" href="./styles/globals.css" />
+    
     <!-- React via CDN -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
     <!-- Markdown + Sanitizer -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+    
     <!-- RDKit JS with fallbacks -->
     <script>
       // RDKit loading with multiple fallbacks
@@ -26,7 +29,6 @@
         rdkitLoadAttempts++;
         console.log(`Attempting to load RDKit (attempt ${rdkitLoadAttempts}/${maxAttempts})`);
         
-        // Try different CDN sources
         const cdnSources = [
           'https://unpkg.com/@rdkit/rdkit/dist/RDKit_minimal.js',
           'https://cdn.jsdelivr.net/npm/@rdkit/rdkit/dist/RDKit_minimal.js',
@@ -43,7 +45,6 @@
             if (window.RDKit) {
               console.log('RDKit loaded successfully from:', currentSource);
               window.RDKitReady = true;
-              // Initialize RDKit
               window.RDKit.init().then(() => {
                 console.log('RDKit initialized successfully');
                 window.RDKitInitialized = true;
@@ -72,7 +73,6 @@
           console.error('All RDKit loading attempts failed');
           window.RDKitReady = false;
           window.RDKitInitialized = false;
-          // Show user-friendly error
           document.addEventListener('DOMContentLoaded', () => {
             const errorDiv = document.createElement('div');
             errorDiv.style.cssText = `
@@ -92,7 +92,6 @@
         }
       }
       
-      // Start loading RDKit when page loads
       window.addEventListener('load', loadRDKit);
     </script>
   </head>
@@ -102,19 +101,16 @@
     <!-- Load utility modules first -->
     <script src="./utils/nepaliHelpers.js"></script>
     <script src="./services/apiService.js"></script>
-    <script src="./utils/toast.js"></script>
-    <script type="text/babel" data-presets="react" src="./hooks/useChatStream.js"></script>
-    <script type="text/babel" data-presets="react" src="./hooks/useVoice.js"></script>
-    <script type="text/babel" data-presets="react" src="./contexts/ChatContext.js"></script>
     
-    <!-- Load component modules via Babel (they contain JSX) -->
-    <script type="text/babel" data-presets="react" src="./components/ConfirmModal.js"></script>
-    <script type="text/babel" data-presets="react" src="./components/ComposerArea.js"></script>
-    <script type="text/babel" data-presets="react" src="./components/MessageList.js"></script>
-    <script type="text/babel" data-presets="react" src="./components/Sidebar.js"></script>
-    <script type="text/babel" data-presets="react" src="./components/MainPane.js"></script>
-    <script type="text/babel" data-presets="react" src="./components/AppShell.js"></script>
+    <!-- Load component modules -->
+    <script src="./components/ConfirmModal.js"></script>
+    <script src="./components/ComposerArea.js"></script>
+    <script src="./components/MessageList.js"></script>
+    <script src="./components/Sidebar.js"></script>
+    <script src="./components/MainPane.js"></script>
+    <script src="./components/AppShell.js"></script>
 
+    <!-- Main application script -->
     <script type="text/babel">
       const { useState, useEffect } = React;
 
@@ -136,16 +132,16 @@
               setIsLoading(false);
             }
           };
-          
+
           testConnection();
         }, []);
-        
+
         if (isLoading) {
-        return (
+          return (
             <div style={{
-                display: 'flex',
+              display: 'flex',
               justifyContent: 'center',
-                alignItems: 'center',
+              alignItems: 'center',
               height: '100vh',
               flexDirection: 'column',
               gap: '20px'
@@ -153,10 +149,10 @@
               <div className="thinking">
                 <span className="spinner" />
                 <span className="thinking-text">Loading Chem Tutor...</span>
+              </div>
             </div>
-          </div>
-        );
-      }
+          );
+        }
 
         return (
           <div>
@@ -189,34 +185,16 @@
                 >
                   ×
                 </button>
-          </div>
+              </div>
             )}
-            <ChatProvider>
-              <AppShell />
-            </ChatProvider>
+            <AppShell />
           </div>
         );
       }
 
-      // Render the app with a guard to avoid blank screen if components fail to load
-      try {
-        if (!window.AppShell) {
-          throw new Error('Components failed to load. Check console for errors.');
-        }
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-      } catch (e) {
-        const el = document.getElementById('root');
-        if (el) {
-          el.innerHTML = '<div style="padding:20px;font-family:Arial;color:#b91c1c;background:#fee2e2;border:1px solid #fecaca;border-radius:8px;margin:20px;">'+
-            '<strong>UI failed to load.</strong><br/>'+
-            (e && e.message ? e.message : 'Unknown error') +
-            '<br/>Please open the browser console and share the error.</div>';
-        }
-        console.error('App boot error:', e);
-      }
+      // Render the app
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<App />);
     </script>
   </body>
-  </html>
-
-
+</html>
