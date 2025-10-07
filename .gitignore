@@ -117,6 +117,16 @@ VOICE_TESTING_GUIDE.md
 VOICE_UPDATE_SUMMARY.md
 QUICK_REFERENCE.md
 
+# Reference documentation files (keep only README.md)
+ARCHITECTURE_TECH.md
+CODEBASE_TOUR.md
+PRD_CHEMTUTOR_REDESIGN.md
+RAG_MANAGEMENT_GUIDE.md
+VIVA_QA.md
+report.md
+docs/API.md
+docs/DEPLOYMENT.md
+
 # Curated extras derived from local PDFs can be regenerated
 backend/services/curated_smiles_extra.json
 
