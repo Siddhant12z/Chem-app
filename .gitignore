@@ -1,30 +1,125 @@
 # Python
 __pycache__/
-*.pyc
-.pytest_cache/
-*.egg-info/
-
-# Virtual envs
-venv/
-local-pdf-rag/venv/
-.env
-.env.*
-
-# Node/Web
-node_modules/
-chat-ui/node_modules/
-dist/
+*.py[cod]
+*$py.class
+*.so
+.Python
 build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# OS/Editor
-.DS_Store
-Thumbs.db
+# Virtual Environment
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+.DS_Store
 
-# Data/Indexes
-local-pdf-rag/data/vector_index/*.faiss
-local-pdf-rag/data/vector_index/*.pkl
-local-pdf-rag/data/docs/pdf/*.pdf
+# Environment variables
+.env
+.env.local
+.env.*.local
 
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Distribution / packaging
+*.tar.gz
+*.whl
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Cache
+.cache/
+*.cache
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+stream.txt
+check*.txt
+extracted*.txt
+
+# Documentation builds
+docs/_build/
+
+# Node modules (if using any frontend build tools in future)
+node_modules/
+
+# OS specific
+Thumbs.db
+Desktop.ini
+
+# Project specific
+rag-system/vectorstore/*.faiss
+rag-system/vectorstore/*.pkl
+
+# Reports and PDFs (keeping the main report in git)
+*.pdf
+!report.md
+
+# Local/generated documentation and summaries
+FINAL_IMPROVEMENTS_SUMMARY.md
+PRD_COMPLETION_STATUS.md
+PHASE2_COMPLETE.md
+PHASE2_DEBUG.md
+DEBUGGING_STEPS.md
+QUICK_FIX.md
+RESOURCE_FIX.md
+TTS_OVERLAP_FIX.md
+TTS_OVERLAP_FINAL_FIX.md
+TTS_OVERLAP_ANALYSIS.md
+NEPALI_TTS_FIX.md
+VOICE_TESTING_GUIDE.md
+VOICE_UPDATE_SUMMARY.md
+QUICK_REFERENCE.md
+
+# Curated extras derived from local PDFs can be regenerated
+backend/services/curated_smiles_extra.json
+
+# Old structure directories (during migration)
+old_*/
+backup_*/

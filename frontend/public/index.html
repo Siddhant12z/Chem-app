@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>ChemTutor - Voice-First Bilingual Organic Chemistry Tutor</title>
+    <link rel="stylesheet" href="/styles/globals.css" />
+    <link rel="stylesheet" href="/styles/tokens.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <!-- Load utility modules first -->
+    <script src="/utils/nepaliHelpers.js"></script>
+    <script src="/services/apiService.js"></script>
+    <script src="/utils/toast.js"></script>
+
+    <!-- Load hooks and contexts -->
+    <script type="text/babel" data-presets="react" src="/hooks/useChatStream.js"></script>
+    <script type="text/babel" data-presets="react" src="/hooks/useVoice.js"></script>
+    <script type="text/babel" data-presets="react" src="/contexts/ChatContext.js"></script>
+
+    <!-- Load React components via Babel -->
+    <script type="text/babel" data-presets="react" src="/components/ConfirmModal.js"></script>
+    <script type="text/babel" data-presets="react" src="/components/ComposerArea.js"></script>
+    <script type="text/babel" data-presets="react" src="/components/MessageList.js"></script>
+    <script type="text/babel" data-presets="react" src="/components/Sidebar.js"></script>
+    <script type="text/babel" data-presets="react" src="/components/MainPane.js"></script>
+    <script type="text/babel" data-presets="react" src="/components/AppShell.js"></script>
+
+    <script type="text/babel">
+      const { useState, useEffect } = React;
+
+      // Main App component
+      function App() {
+        const [isLoading, setIsLoading] = useState(true);
+        const [error, setError] = useState(null);
+
+        useEffect(() => {
+          // Test API connection on startup
+          const testConnection = async () => {
+            try {
+              await apiService.testConnection();
+              console.log('API connection successful');
+            } catch (err) {
+              console.warn('API connection failed:', err);
+              setError('Unable to connect to server. Some features may not work.');
+            } finally {
+              setIsLoading(false);
+            }
+          };
+
+          testConnection();
+        }, []);
+
+        if (isLoading) {
+          return (
+            <div style={{
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              height: '100vh',
+              flexDirection: 'column',
+              gap: '20px'
+            }}>
+              <div className="thinking">
+                <span className="spinner" />
+                <span className="thinking-text">Loading ChemTutor...</span>
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <div>
+            {error && (
+              <div style={{
+                position: 'fixed',
+                top: '10px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                background: '#fef3c7',
+                border: '1px solid #f59e0b',
+                padding: '12px 20px',
+                borderRadius: '8px',
+                color: '#92400e',
+                zIndex: 1000,
+                maxWidth: '500px',
+                textAlign: 'center'
+              }}>
+                {error}
+                <button
+                  onClick={() => setError(null)}
+                  style={{
+                    marginLeft: '10px',
+                    background: 'none',
+                    border: 'none',
+                    color: '#92400e',
+                    cursor: 'pointer',
+                    fontSize: '16px'
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            )}
+            <ChatProvider>
+              <AppShell />
+            </ChatProvider>
+          </div>
+        );
+      }
+
+      // Render the app
+      try {
+        if (!window.AppShell) {
+          throw new Error('Components failed to load. Check console for errors.');
+        }
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+      } catch (e) {
+        const el = document.getElementById('root');
+        if (el) {
+          el.innerHTML = '<div style="padding:20px;font-family:Arial;color:#b91c1c;background:#fee2e2;border:1px solid #fecaca;border-radius:8px;margin:20px;">'+
+            '<strong>UI failed to load.</strong><br/>'+
+            (e && e.message ? e.message : 'Unknown error') +
+            '<br/>Please open the browser console and share the error.</div>';
+        }
+        console.error('App boot error:', e);
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,43 @@
+{
+  "name": "chemtutor-frontend",
+  "version": "1.0.0",
+  "description": "Frontend for ChemTutor - Voice-First Bilingual Organic Chemistry Tutor",
+  "main": "src/index.html",
+  "scripts": {
+    "dev": "python ../backend/app.py",
+    "build": "echo 'No build step required - using runtime Babel transpilation'",
+    "lint": "echo 'Add ESLint when needed'",
+    "test": "echo 'Add tests when needed'"
+  },
+  "keywords": [
+    "react",
+    "chemistry",
+    "tutor",
+    "voice",
+    "bilingual",
+    "education"
+  ],
+  "author": "ChemTutor Team",
+  "license": "MIT",
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@babel/standalone": "^7.23.0",
+    "marked": "^11.0.0",
+    "dompurify": "^3.0.6"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}

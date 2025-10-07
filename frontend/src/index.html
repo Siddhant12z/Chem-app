@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ChemTutor - Voice-First Bilingual Organic Chemistry Tutor</title>
+    <link rel="stylesheet" href="./styles/tokens.css" />
+    <link rel="stylesheet" href="./styles/globals.css" />
+    <!-- React via CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Markdown + Sanitizer -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+    <!-- RDKit JS with fallbacks -->
+    <script>
+      // RDKit loading with multiple fallbacks
+      let rdkitLoadAttempts = 0;
+      const maxAttempts = 3;
+      
+      function loadRDKit() {
+        rdkitLoadAttempts++;
+        console.log(`Attempting to load RDKit (attempt ${rdkitLoadAttempts}/${maxAttempts})`);
+        
+        const cdnSources = [
+          'https://unpkg.com/@rdkit/rdkit/dist/RDKit_minimal.js',
+          'https://cdn.jsdelivr.net/npm/@rdkit/rdkit/dist/RDKit_minimal.js',
+          'https://cdnjs.cloudflare.com/ajax/libs/rdkit/2023.03.1/RDKit_minimal.js'
+        ];
+        
+        const currentSource = cdnSources[(rdkitLoadAttempts - 1) % cdnSources.length];
+        
+        const script = document.createElement('script');
+        script.src = currentSource;
+        script.onload = () => {
+          setTimeout(() => {
+            if (window.RDKit) {
+              console.log('RDKit loaded from:', currentSource);
+              window.RDKitReady = true;
+              window.RDKit.init().then(() => {
+                console.log('RDKit initialized');
+                window.RDKitInitialized = true;
+              }).catch(err => {
+                console.error('RDKit init failed:', err);
+              });
+            }
+          }, 1000);
+        };
+        script.onerror = () => {
+          if (rdkitLoadAttempts < maxAttempts) {
+            setTimeout(loadRDKit, 2000);
+          } else {
+            console.error('RDKit load failed');
+            window.RDKitReady = false;
+          }
+        };
+        document.head.appendChild(script);
+      }
+      
+      window.addEventListener('load', loadRDKit);
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <!-- Load utilities first -->
+    <script src="./utils/nepaliHelpers.js"></script>
+    <script src="./services/apiService.js"></script>
+    <script src="./utils/toast.js"></script>
+
+    <!-- Load NEW streaming hooks -->
+    <script type="text/babel" data-presets="react" src="./hooks/useSSEChat.js"></script>
+    <script type="text/babel" data-presets="react" src="./hooks/useStreamingVoice.js"></script>
+    <script type="text/babel" data-presets="react" src="./hooks/useBrowserTTS.js"></script>
+    <script type="text/babel" data-presets="react" src="./contexts/ChatContext.js"></script>
+
+    <!-- Load components -->
+    <script type="text/babel" data-presets="react" src="./components/StatusBar.js"></script>
+    <script type="text/babel" data-presets="react" src="./components/ConfirmModal.js"></script>
+    <script type="text/babel" data-presets="react" src="./components/TTSModeSelector.js"></script>
+    <script type="text/babel" data-presets="react" src="./components/ComposerArea.js"></script>
+    <script type="text/babel" data-presets="react" src="./components/MessageList.js"></script>
+    <script type="text/babel" data-presets="react" src="./components/Sidebar.js"></script>
+    <script type="text/babel" data-presets="react" src="./components/MainPane.js"></script>
+    <script type="text/babel" data-presets="react" src="./components/AppShell.js"></script>
+
+    <script type="text/babel">
+      const { useState, useEffect } = React;
+
+      // Main App component
+      function App() {
+        const [isLoading, setIsLoading] = useState(true);
+        const [error, setError] = useState(null);
+
+        useEffect(() => {
+          const testConnection = async () => {
+            try {
+              await apiService.testConnection();
+              console.log('API connection successful');
+            } catch (err) {
+              console.warn('API connection failed:', err);
+              setError('Unable to connect to server');
+            } finally {
+              setIsLoading(false);
+            }
+          };
+
+          testConnection();
+        }, []);
+
+        if (isLoading) {
+          return (
+            <div style={{
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              height: '100vh',
+              flexDirection: 'column',
+              gap: '20px'
+            }}>
+              <div className="thinking">
+                <span className="spinner" />
+                <span className="thinking-text">Loading ChemTutor...</span>
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <div>
+            {error && (
+              <div style={{
+                position: 'fixed',
+                top: '10px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                background: '#fef3c7',
+                border: '1px solid #f59e0b',
+                padding: '12px 20px',
+                borderRadius: '8px',
+                color: '#92400e',
+                zIndex: 1000,
+                maxWidth: '500px'
+              }}>
+                {error}
+                <button onClick={() => setError(null)} style={{
+                  marginLeft: '10px',
+                  background: 'none',
+                  border: 'none',
+                  color: '#92400e',
+                  cursor: 'pointer'
+                }}>×</button>
+              </div>
+            )}
+            <ChatProvider>
+              <AppShell />
+            </ChatProvider>
+          </div>
+        );
+      }
+
+      // Render the app
+      try {
+        if (!window.AppShell) {
+          throw new Error('Components failed to load');
+        }
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+      } catch (e) {
+        const el = document.getElementById('root');
+        if (el) {
+          el.innerHTML = '<div style="padding:20px;color:#b91c1c;background:#fee2e2;border:1px solid #fecaca;border-radius:8px;margin:20px;">'+
+            '<strong>UI failed to load.</strong><br/>'+
+            (e && e.message ? e.message : 'Unknown error') +
+            '<br/>Check browser console.</div>';
+        }
+        console.error('App error:', e);
+      }
+    </script>
+  </body>
+</html>
+

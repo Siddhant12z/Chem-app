@@ -1,9 +1,27 @@
+# Core Flask dependencies
 flask>=3.0.0
 flask-cors>=4.0.0
 requests>=2.31.0
+
+# LLM and Embeddings
 langchain-community>=0.2.0
+langchain>=0.2.0
+
+# OpenAI for voice services
 openai>=1.0.0
+
+# Environment management
 python-dotenv>=1.0.0
+
+# Chemistry and molecule visualization
 rdkit>=2023.9.1
 Pillow>=10.0.0
 
+# PDF processing
+PyPDF2>=3.0.0
+
+# Vector search (FAISS)
+faiss-cpu>=1.7.4
+
+# Additional utilities
+numpy>=1.24.0
