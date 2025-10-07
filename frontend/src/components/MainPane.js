@@ -22,6 +22,7 @@ function MainPane({
     isSpeaking,
     isMuted,
     isRecording,
+    isProcessingSTT,
     playAudio,
     stopSpeaking,
     handleVoiceInput,
@@ -97,6 +98,7 @@ function MainPane({
         setPrefill={setPrefill}
         onSend={handleSend}
         isRecording={isRecording}
+        isProcessingSTT={isProcessingSTT}
         onVoiceInput={handleVoiceInput}
         isSpeaking={currentIsSpeaking}
         onStopSpeaking={currentStopSpeaking}

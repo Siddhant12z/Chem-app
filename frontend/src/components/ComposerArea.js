@@ -9,7 +9,8 @@ function ComposerArea({
   prefill, 
   setPrefill, 
   onSend, 
-  isRecording, 
+  isRecording,
+  isProcessingSTT, 
   onVoiceInput, 
   isSpeaking, 
   onStopSpeaking, 
@@ -33,7 +34,7 @@ function ComposerArea({
         <QuickActionsChips chips={quickChips} onPick={(t) => setPrefill(t)} />
       </div>
       <div className="composer-row">
-        <MicButton isRecording={isRecording} onToggle={onVoiceInput} />
+        <MicButton isRecording={isRecording} isProcessing={isProcessingSTT} onToggle={onVoiceInput} />
         <TextComposer value={prefill} onChange={setPrefill} placeholder="Type Question" onSend={onSend} />
         <TTSModeSelector 
           currentMode={ttsMode}
@@ -42,7 +43,9 @@ function ComposerArea({
           isBrowserAvailable={isBrowserAvailable}
         />
         <SpeakerButton isSpeaking={isSpeaking} onToggle={onStopSpeaking} isMuted={isMuted} />
-        <div className="mic-helper">Click microphone to speak your question</div>
+        <div className="mic-helper">
+          {isProcessingSTT ? '⏳ Processing your speech...' : 'Click microphone to speak your question'}
+        </div>
       </div>
     </div>
   );
@@ -85,14 +88,43 @@ function TextComposer({ value, onChange, placeholder, onSend }) {
   );
 }
 
-function MicButton({ isRecording, onToggle }) {
+function MicButton({ isRecording, isProcessing, onToggle }) {
+  // Determine button state
+  const getButtonState = () => {
+    if (isProcessing) {
+      return { 
+        icon: '⏳', 
+        title: 'Processing your speech...', 
+        className: 'processing',
+        disabled: true 
+      };
+    }
+    if (isRecording) {
+      return { 
+        icon: '⏹️', 
+        title: 'Stop Recording', 
+        className: 'recording',
+        disabled: false 
+      };
+    }
+    return { 
+      icon: '🎤', 
+      title: 'Start Recording', 
+      className: '',
+      disabled: false 
+    };
+  };
+  
+  const { icon, title, className, disabled } = getButtonState();
+  
   return (
     <button 
-      className={`mic-button ${isRecording ? 'recording' : ''}`} 
+      className={`mic-button ${className}`} 
       onClick={onToggle} 
-      title={isRecording ? 'Stop Recording' : 'Start Recording'}
+      title={title}
+      disabled={disabled}
     >
-      {isRecording ? '⏹️' : '🎤'}
+      {icon}
     </button>
   );
 }

@@ -10,10 +10,12 @@ function useStreamingVoice() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isProcessingSTT, setIsProcessingSTT] = useState(false); // NEW: Processing speech-to-text
   
   const audioQueueRef = useRef([]);
   const currentAudioRef = useRef(null);
   const isProcessingRef = useRef(false);
+  const mediaRecorderRef = useRef(null); // Track active recorder
   
   /**
    * Play audio from base64 data
@@ -172,17 +174,29 @@ function useStreamingVoice() {
   }, [isMuted]);
   
   /**
-   * Voice input (STT) - reuse existing logic
+   * Voice input (STT) - Enhanced with processing feedback
    */
   const handleVoiceInput = useCallback(async () => {
-    if (isRecording) {
-      setIsRecording(false);
+    // If already recording, stop it
+    if (isRecording && mediaRecorderRef.current) {
+      console.log('[Voice Input] Stopping recording');
+      if (mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+      return;
+    }
+
+    // Prevent starting new recording while processing
+    if (isProcessingSTT) {
+      console.log('[Voice Input] Already processing transcription, please wait');
       return;
     }
 
     try {
+      console.log('[Voice Input] Requesting microphone access');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      mediaRecorderRef.current = mediaRecorder;
       const audioChunks = [];
 
       mediaRecorder.ondataavailable = (event) => {
@@ -190,43 +204,69 @@ function useStreamingVoice() {
       };
 
       mediaRecorder.onstop = async () => {
+        console.log('[Voice Input] Recording stopped, processing transcription...');
+        setIsRecording(false);
+        setIsProcessingSTT(true); // Show "Processing..." state
+        
         const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        
         try {
           const result = await apiService.speechToText(audioBlob);
+          
           if (result.success && result.transcript) {
+            console.log('[Voice Input] Transcription successful:', result.transcript);
             window.dispatchEvent(new CustomEvent('stt:transcript', { 
               detail: { transcript: result.transcript } 
             }));
           } else {
+            console.error('[Voice Input] Transcription failed:', result.error);
             alert('Speech recognition failed: ' + (result.error || 'Unknown error'));
           }
         } catch (error) {
+          console.error('[Voice Input] Transcription error:', error);
           alert('Speech recognition error: ' + error.message);
+        } finally {
+          setIsProcessingSTT(false);
+          mediaRecorderRef.current = null;
+          stream.getTracks().forEach(track => track.stop());
         }
+      };
+
+      mediaRecorder.onerror = (error) => {
+        console.error('[Voice Input] MediaRecorder error:', error);
         setIsRecording(false);
+        setIsProcessingSTT(false);
+        mediaRecorderRef.current = null;
         stream.getTracks().forEach(track => track.stop());
+        alert('Recording error: ' + error.message);
       };
 
       mediaRecorder.start();
       setIsRecording(true);
+      console.log('[Voice Input] Recording started');
       
       // Auto-stop after 15 seconds
       setTimeout(() => {
         if (mediaRecorder.state === 'recording') {
+          console.log('[Voice Input] Auto-stopping after 15 seconds');
           mediaRecorder.stop();
         }
       }, 15000);
       
     } catch (error) {
+      console.error('[Voice Input] Microphone access error:', error);
       alert('Microphone access denied: ' + error.message);
       setIsRecording(false);
+      setIsProcessingSTT(false);
+      mediaRecorderRef.current = null;
     }
-  }, [isRecording]);
+  }, [isRecording, isProcessingSTT]);
   
   return {
     isSpeaking,
     isMuted,
     isRecording,
+    isProcessingSTT, // NEW: Expose processing state
     playAudio,
     stopSpeaking,
     handleVoiceInput,
